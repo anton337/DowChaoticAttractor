@@ -8,6 +8,8 @@
 #include <boost/algorithm/string.hpp>
 #include <algorithm>
 
+int DIM = 12;
+
 struct data
 {
   int index;
@@ -94,6 +96,9 @@ void EMSD(std::vector<data> const & vec, std::vector<float> const & ema,std::vec
   }
 }
 
+int dim_x = 0;
+int dim_y = 1;
+
 void draw()
 {
   glBegin(GL_LINES);
@@ -114,8 +119,8 @@ void draw()
     glVertex3f(1.0f-i*factor,mfactor*macd[i  ],0);
     glVertex3f(1.0f-i*factor,mfactor*macd[i-1],0);
     glColor3f(1,1,0);
-    glVertex3f(pfactor*projection[i  ].dat[0],pfactor*projection[i  ].dat[1],0);
-    glVertex3f(pfactor*projection[i-1].dat[0],pfactor*projection[i-1].dat[1],0);
+    glVertex3f(pfactor*projection[i  ].dat[dim_x],pfactor*projection[i  ].dat[dim_y],0);
+    glVertex3f(pfactor*projection[i-1].dat[dim_x],pfactor*projection[i-1].dat[dim_y],0);
   }
   glEnd();
 }
@@ -189,6 +194,10 @@ void keyboard(unsigned char key,int x,int y)
   switch(key)
   {
     case 27:exit(1);break;
+    case 'q':dim_x++;if(dim_x>=DIM)dim_x=DIM-1;break;
+    case 'a':dim_x--;if(dim_x<0)dim_x=0;break;
+    case 'w':dim_y++;if(dim_y>=DIM)dim_y=DIM-1;break;
+    case 's':dim_y--;if(dim_y<0)dim_y=0;break;
     default:break;
   }
 }
@@ -221,6 +230,12 @@ void compute_projection(int delta,int dim,std::vector<float>const& in,std::vecto
   }
 }
 
+void idle()
+{
+  glutPostRedisplay();
+  usleep(100);
+}
+
 int main(int argc, char **argv)
 {
   std::cout << "Welcome to Stock Strange Attractor" << std::endl;
@@ -228,12 +243,13 @@ int main(int argc, char **argv)
   EMA(vec,ema26,26,26);
   EMA(vec,ema12,12,26);
   MACD(ema12,ema26,macd);
-  compute_projection(1,12,macd,projection);
+  compute_projection(1,DIM,macd,projection);
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("red 3D lighted cube");
   glutDisplayFunc(display);
   glutKeyboardFunc(keyboard);
+  glutIdleFunc(idle);
   init();
   glutMainLoop();
   return 0;
