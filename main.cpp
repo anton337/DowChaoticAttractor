@@ -7,6 +7,7 @@
 #include <GL/glut.h>
 #include <boost/algorithm/string.hpp>
 #include <algorithm>
+#include <armadillo>
 
 int DIM = 12;
 
@@ -236,6 +237,176 @@ void idle()
   usleep(100);
 }
 
+float L2_norm(Point const & pt1,Point const & pt2)
+{
+  float ret = 0;
+  for(int i=0;i<pt1.dat.size();i++)
+  {
+    ret += (pt1.dat[i] - pt2.dat[i])*(pt1.dat[i] - pt2.dat[i]);
+  }
+  return sqrtf(ret);
+}
+
+// nx = p.size()^2
+void compute_metrics ( std::vector < Point > const & p , float * d , int nx )
+{
+  for(int x=0,i=0;x<nx;x++)
+  for(int y=0;y<nx;y++,i++)
+  {
+    d[i] = L2_norm(p[x],p[y]);
+  }
+}
+
+// d = [nx x nx]
+// W_ij = exp(-|x_i - x_j|^2/t^2)
+void compute_distance_matrix ( float * W , float * d , int nx , float t )
+{
+  float inv_sigma_sqr = -1.0f / (t*t);
+  for(int j=0,k=0;j<nx;j++,k++)
+  {
+    // L^2 norm
+    W[k] = exp(d[k]*d[k]*inv_sigma_sqr);
+  }
+}
+
+
+// D_ii = sum_j W_ij
+void compute_weight_matrix ( float * D , float * W , int nx )
+{
+  for(int i=0,k=0;i<nx;i++)
+  {
+    D[i] = 0;
+    for(int j=0;j<nx;j++,k++)
+    {
+      D[i] += W[k];
+    }
+  }
+}
+
+// solve generalized eigen-vector problem
+// L f = lambda D f
+// L = D - W, where D is diagonal
+// so D^-1 L f = lambda f
+// D^-1 ( D - W ) f = lambda f
+// ( I - D^-1 W ) f = lambda f
+void solve_eigen_problem ( double * A , float * D , float * W , float * eig_val , float * eig_vec , int nx , float epsilon )
+{
+  for(int i=0,k=0;i<nx;i++)
+    for(int j=0;j<nx;j++,k++)
+    {
+      A[k] = (i==j)?1.0f:0.0f;
+    }
+  for(int i=0,k=0;i<nx;i++)
+    for(int j=0;j<nx;j++,k++)
+    {
+      A[k] -= W[k] / (fabs(D[j]) + epsilon);
+    }
+
+  arma::mat Amat = arma::mat(A,nx,nx);
+
+  arma::vec eigval;
+  arma::mat eigvec;
+  arma::eig_sym ( eigval, eigvec, Amat );
+
+  for(int i=0;i<nx;i++)
+  {
+    eig_val[i] = eigval[i];
+  }
+
+  for(int i=0,k=0;i<nx;i++)
+    for(int j=0;j<nx;j++,k++)
+    {
+      eig_vec[k] = eigvec(i,j);
+    }
+
+  std::cout << "eigval:" << std::endl;
+  for(int i=0;i<30;i++)
+  {
+    std::cout << eigval[i] << std::endl;
+  }
+}
+
+float * Laplacian_eigen_maps ( std::vector < Point > const & p , int n , float sigma , int out_n )
+{
+
+  float * out = new float[n*out_n];
+
+  float epsilon = 1e-5;
+
+  if(n>=p.size())
+  {
+    n = p.size();
+  }
+
+  int nx = n*n;
+
+  float * d = new float[nx];
+
+  // nx = p.size()^2
+  compute_metrics ( p , d , n );
+ 
+  float * W = new float[nx];
+
+  // d = [nx x nx]
+  // W_ij = exp(-|x_i - x_j|^2/t^2)
+  compute_distance_matrix ( W , d , nx , sigma );
+ 
+  float * D = new float[n];
+
+  // D_ii = sum_j W_ij
+  compute_weight_matrix ( D , W , n );
+ 
+  double * A = new double[nx];
+
+  float * eig_val = new float[n];
+  float * eig_vec = new float[nx];
+
+  // solve generalized eigen-vector problem
+  // L f = lambda D f
+  // L = D - W, where D is diagonal
+  // so D^-1 L f = lambda f
+  // D^-1 ( D - W ) f = lambda f
+  // ( I - D^-1 W ) f = lambda f
+  solve_eigen_problem ( A , D , W , eig_val , eig_vec , n , epsilon );
+
+  for(int x=0,k=0;x<n;x++)
+    for(int y=0;y<out_n;y++,k++)
+    {
+      out[k] = eig_vec[k];
+    }
+
+  delete [] eig_val;
+  delete [] eig_vec;
+  delete [] A;
+  delete [] D;
+  delete [] W;
+  delete [] d;
+
+  return out;
+
+}
+
+void calculate_eigen_map_projection(std::vector<Point>const& p,int n,Point const& pt,float const* eig_vec,Point & proj_pt,int n_out)
+{
+  if(n>=p.size())
+  {
+    n = p.size();
+  }
+
+  int nx = n*n;
+
+  float * d = new float[nx];
+
+  // nx = p.size()^2
+  compute_metrics ( p , d , n );
+ 
+  float * W = new float[nx];
+
+  // d = [nx x nx]
+  // W_ij = exp(-|x_i - x_j|^2/t^2)
+  compute_distance_matrix ( W , d , nx , sigma );
+}
+
 int main(int argc, char **argv)
 {
   std::cout << "Welcome to Stock Strange Attractor" << std::endl;
@@ -244,6 +415,7 @@ int main(int argc, char **argv)
   EMA(vec,ema12,12,26);
   MACD(ema12,ema26,macd);
   compute_projection(1,DIM,macd,projection);
+  float * eig_vec = Laplacian_eigen_maps ( projection , 1000 , 0.01f , DIM );
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("red 3D lighted cube");
