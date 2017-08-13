@@ -35,6 +35,7 @@ std::vector<float> ema26;
 std::vector<float> ema12;
 std::vector<float> macd;
 std::vector<Point> projection;
+std::vector<Point> projection_laplacian;
 
 // exponential moving average
 void EMA(std::vector<data> const & vec, std::vector<float> & ema , int win , int offset )
@@ -103,7 +104,7 @@ int dim_y = 1;
 void draw()
 {
   glBegin(GL_LINES);
-  int n = std::min(std::min(vec.size(),ema26.size()),projection.size());
+  int n = std::min(std::min(vec.size(),ema26.size()),projection_laplacian.size());
   float factor = 2.0f/n;
   float vfactor = 2.0f/25000;
   float mfactor = 10.0f;
@@ -120,8 +121,8 @@ void draw()
     glVertex3f(1.0f-i*factor,mfactor*macd[i  ],0);
     glVertex3f(1.0f-i*factor,mfactor*macd[i-1],0);
     glColor3f(1,1,0);
-    glVertex3f(pfactor*projection[i  ].dat[dim_x],pfactor*projection[i  ].dat[dim_y],0);
-    glVertex3f(pfactor*projection[i-1].dat[dim_x],pfactor*projection[i-1].dat[dim_y],0);
+    glVertex3f(pfactor*projection_laplacian[i  ].dat[dim_x],pfactor*projection_laplacian[i  ].dat[dim_y],0);
+    glVertex3f(pfactor*projection_laplacian[i-1].dat[dim_x],pfactor*projection_laplacian[i-1].dat[dim_y],0);
   }
   glEnd();
 }
@@ -257,6 +258,14 @@ void compute_metrics ( std::vector < Point > const & p , float * d , int nx )
   }
 }
 
+void compute_metrics_1d ( std::vector < Point > const & p , Point const & pt, float * d , int nx )
+{
+  for(int x=0,i=0;x<nx;x++)
+  {
+    d[i] = L2_norm(p[x],pt);
+  }
+}
+
 // d = [nx x nx]
 // W_ij = exp(-|x_i - x_j|^2/t^2)
 void compute_distance_matrix ( float * W , float * d , int nx , float t )
@@ -386,25 +395,62 @@ float * Laplacian_eigen_maps ( std::vector < Point > const & p , int n , float s
 
 }
 
-void calculate_eigen_map_projection(std::vector<Point>const& p,int n,Point const& pt,float const* eig_vec,Point & proj_pt,int n_out)
+void calculate_eigen_map_projection(std::vector<Point>const& p,int n,Point const& pt,float const* eig_vec,Point & proj_pt,int n_out,float sigma)
 {
   if(n>=p.size())
   {
     n = p.size();
   }
 
-  int nx = n*n;
+  int nx = n*1;
 
   float * d = new float[nx];
 
-  // nx = p.size()^2
-  compute_metrics ( p , d , n );
+  compute_metrics_1d ( p , pt , d , n );
  
   float * W = new float[nx];
 
   // d = [nx x nx]
   // W_ij = exp(-|x_i - x_j|^2/t^2)
   compute_distance_matrix ( W , d , nx , sigma );
+
+  proj_pt.dat.clear();
+  for(int v=0,k=0;v<n_out;v++)
+  {
+    float proj = 0;
+    for(int i=0;i<n;i++,k++)
+    {
+      proj += d[i] * eig_vec[k];
+    }
+    proj_pt.dat.push_back(proj);
+  }
+
+}
+
+void normalize(std::vector<Point>& p)
+{
+  std::vector<float> norm_vec(p[0].dat.size());
+  for(int i=0;i<p.size();i++)
+  {
+    for(int k=0;k<norm_vec.size();k++)
+    {
+      if(fabs(p[i].dat[k])>norm_vec[k]&&fabs(p[i].dat[k])<1e3)
+      {
+        norm_vec[k] = fabs(p[i].dat[k]);
+      }
+    }
+  }
+  for(int k=0;k<norm_vec.size();k++)
+  {
+    std::cout << k << "\t" << norm_vec[k] << std::endl;
+  }
+  for(int i=0;i<p.size();i++)
+  {
+    for(int k=0;k<norm_vec.size();k++)
+    {
+      p[i].dat[k] /= norm_vec[k] + 0.001f;
+    }
+  }
 }
 
 int main(int argc, char **argv)
@@ -415,7 +461,16 @@ int main(int argc, char **argv)
   EMA(vec,ema12,12,26);
   MACD(ema12,ema26,macd);
   compute_projection(1,DIM,macd,projection);
-  float * eig_vec = Laplacian_eigen_maps ( projection , 1000 , 0.01f , DIM );
+  float sigma = 0.01f;
+  int num_ref_pts = 100;
+  float * eig_vec = Laplacian_eigen_maps ( projection , num_ref_pts , sigma , DIM );
+  for(int i=0;i<projection.size();i++)
+  {
+    Point pt;
+    calculate_eigen_map_projection(projection,num_ref_pts,projection[i],eig_vec,pt,DIM,sigma);
+    projection_laplacian.push_back(pt);
+  }
+  normalize(projection_laplacian);
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("red 3D lighted cube");
