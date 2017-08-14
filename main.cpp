@@ -34,6 +34,7 @@ std::vector<data> vec;
 std::vector<float> ema26;
 std::vector<float> ema12;
 std::vector<float> macd;
+std::vector<float> pmacd;
 std::vector<Point> projection;
 std::vector<Point> projection_laplacian;
 
@@ -107,7 +108,7 @@ void draw()
   int n = std::min(std::min(vec.size(),ema26.size()),projection_laplacian.size());
   float factor = 2.0f/n;
   float vfactor = 2.0f/25000;
-  float mfactor = 10.0f;
+  float mfactor = 1.0f;
   float pfactor = 5.0f;
   for(int i=2;i<n;i++)
   {
@@ -118,8 +119,8 @@ void draw()
     glVertex3f(1.0f-i*factor,-1.0f+vfactor*ema26[i  ],0);
     glVertex3f(1.0f-i*factor,-1.0f+vfactor*ema26[i-1],0);
     glColor3f(0,1,0);
-    glVertex3f(1.0f-i*factor,mfactor*macd[i  ],0);
-    glVertex3f(1.0f-i*factor,mfactor*macd[i-1],0);
+    glVertex3f(1.0f-i*factor,0.9f+mfactor*pmacd[i  ],0);
+    glVertex3f(1.0f-i*factor,0.9f+mfactor*pmacd[i-1],0);
     glColor3f(1,1,0);
     glVertex3f(pfactor*projection_laplacian[i  ].dat[dim_x],pfactor*projection_laplacian[i  ].dat[dim_y],0);
     glVertex3f(pfactor*projection_laplacian[i-1].dat[dim_x],pfactor*projection_laplacian[i-1].dat[dim_y],0);
@@ -204,7 +205,7 @@ void keyboard(unsigned char key,int x,int y)
   }
 }
 
-void MACD(std::vector<float>const& v12,std::vector<float>const& v26,std::vector<float>& macd)
+void MACD(std::vector<float>const& v12,std::vector<float>const& v26,std::vector<float>& macd,std::vector<float>& pmacd)
 {
   if(v12.size()!=v26.size())
   {
@@ -212,9 +213,11 @@ void MACD(std::vector<float>const& v12,std::vector<float>const& v26,std::vector<
     exit(1);
   }
   macd.resize(v12.size());
+  pmacd.resize(v12.size());
   for(int i=0;i<macd.size();i++)
   {
-    macd[i] = (v12[i]-v26[i])/v26[i];
+    pmacd[i] = (v12[i]-v26[i])/v26[i];
+    macd[i] = (v12[i]-v26[i]);
   }
 }
 
@@ -415,15 +418,17 @@ void calculate_eigen_map_projection(std::vector<Point>const& p,int n,Point const
   compute_distance_matrix ( W , d , nx , sigma );
 
   proj_pt.dat.clear();
-  for(int v=0,k=0;v<n_out;v++)
-  {
-    float proj = 0;
-    for(int i=0;i<n;i++,k++)
-    {
-      proj += d[i] * eig_vec[k];
-    }
-    proj_pt.dat.push_back(proj);
-  }
+  //for(int v=0,k=0;v<n_out;v++)
+  //{
+  //  float proj = 0;
+  //  for(int i=0;i<n;i++,k++)
+  //  {
+  //    proj += d[i] * eig_vec[k];
+  //  }
+  //  proj_pt.dat.push_back(proj);
+  //}
+
+  proj_pt = pt;
 
 }
 
@@ -434,7 +439,9 @@ void normalize(std::vector<Point>& p)
   {
     for(int k=0;k<norm_vec.size();k++)
     {
-      if(fabs(p[i].dat[k])>norm_vec[k]&&fabs(p[i].dat[k])<1e3)
+      if(fabs(p[i].dat[k])>norm_vec[k]
+          //&&fabs(p[i].dat[k])<1e3
+          )
       {
         norm_vec[k] = fabs(p[i].dat[k]);
       }
@@ -448,9 +455,49 @@ void normalize(std::vector<Point>& p)
   {
     for(int k=0;k<norm_vec.size();k++)
     {
-      p[i].dat[k] /= norm_vec[k] + 0.001f;
+      p[i].dat[k] /= 5*norm_vec[k] + 0.001f;
     }
   }
+}
+
+float * singular_value_decomposition( std::vector < Point > const & p , int n , int out_n )
+{
+  // calculate average
+  std::vector<float> avg(p[0].dat.size());
+  for(int k=0;k<n;k++)
+  for(int i=0;i<avg.size();i++)
+  {
+    avg[i] += (p[k].dat[i] - avg[i])/(k+1);
+  }
+
+  // calculate covariance matrix
+  float * cov = new float[avg.size()*avg.size()];
+  for(int j=0;j<n;j++)
+  for(int x=0,k=0;x<avg.size();x++)
+  for(int y=0;y<avg.size();y++,k++)
+  {
+    cov[k] += (p[j].dat[x] - avg[x])*(p[j].dat[y] - avg[y])/(j+1);
+  }
+
+  // compute eigen-vectors
+  arma::mat Amat = arma::mat(cov,avg.size(),avg.size());
+
+  arma::vec eigval;
+  arma::mat eigvec;
+  arma::eig_sym ( eigval, eigvec, Amat );
+
+  float * eig_val = new float[avg.size()];
+  for(int i=0;i<avg.size();i++)
+  {
+    eig_val[i] = eigval[i];
+  }
+
+  float * eig_vec = new float[avg.size()*avg.size()];
+  for(int i=0,k=0;i<avg.size();i++)
+    for(int j=0;j<avg.size();j++,k++)
+    {
+      eig_vec[k] = eigvec(i,j);
+    }
 }
 
 int main(int argc, char **argv)
@@ -459,18 +506,19 @@ int main(int argc, char **argv)
   read_data("HistoricalPrices.csv");
   EMA(vec,ema26,26,26);
   EMA(vec,ema12,12,26);
-  MACD(ema12,ema26,macd);
+  MACD(ema12,ema26,macd,pmacd);
   compute_projection(1,DIM,macd,projection);
-  float sigma = 0.01f;
+  float sigma = 200.0f;
   int num_ref_pts = 100;
-  float * eig_vec = Laplacian_eigen_maps ( projection , num_ref_pts , sigma , DIM );
-  for(int i=0;i<projection.size();i++)
-  {
-    Point pt;
-    calculate_eigen_map_projection(projection,num_ref_pts,projection[i],eig_vec,pt,DIM,sigma);
-    projection_laplacian.push_back(pt);
-  }
-  normalize(projection_laplacian);
+  //float * eig_vec = Laplacian_eigen_maps ( projection , num_ref_pts , sigma , DIM );
+  //for(int i=0;i<projection.size();i++)
+  //{
+  //  Point pt;
+  //  calculate_eigen_map_projection(projection,num_ref_pts,projection[i],eig_vec,pt,DIM,sigma);
+  //  projection_laplacian.push_back(pt);
+  //}
+  //normalize(projection_laplacian);
+  singular_value_decomposition( macd , num_ref_pts , DIM );
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("red 3D lighted cube");
